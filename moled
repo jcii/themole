@@ -1,0 +1,143 @@
+#!/usr/local/bin/perl
+use warnings;
+use strict;
+sub POE::Kernel::ASSERT_DEFAULT () { 1 }
+#sub POE::Kernel::ASSERT_DATA () { 1 }
+sub POE::Kernel::ASSERT_EVENTS () { 1 }
+#sub POE::Kernel::ASSERT_FILES () { 1 }
+#sub POE::Kernel::ASSERT_RETVALS () { 1 }
+#sub POE::Kernel::ASSERT_USAGE () { 1 }
+#sub POE::Kernel::TRACE_DEFAULT() { 1 }
+#sub POE::Kernel::TRACE_EVENTS() { 1 }
+#sub POE::Kernel::TRACE_PROFILE() { 1 }
+#sub POE::Kernel::TRACE_SESSIONS() { 1 }
+#sub POE::Kernel::TRACE_REFCNT() { 1 }
+sub Mole::MSG_DEBUG() { 0 }
+$Data::Dumper::Maxdepth = Mole::MSG_DEBUG;
+use YAML;
+use POE;
+use POE::Filter::Reference;
+use POE::Component::Server::TCP;
+#use POE::Component::Server::PreforkTCP;
+use Mole::Snmp;
+use Mole::Message;
+use Data::Dumper;
+#use Mole::Message::Systable;
+
+my $debug = &Mole::MSG_DEBUG();
+my $MCNT = 0;
+#POE::Component::Server::PreforkTCP->new
+POE::Component::Server::TCP->new
+  ( Alias => $Mole::Server::ALIAS,
+    Address      => "localhost",
+    Port         => 4269,
+    #ClientFilter => ["POE::Filter::Reference", "YAML"],
+    ClientFilter => ["POE::Filter::Reference"],
+    InlineStates =>  { 'return' => \&return,
+                     },
+    #MaxServer    =>  10,		# Prefork argument
+    #MinServer    =>  1,		# Prefork argument
+    ClientInput => \&ClientInput,	# Handle client requests here.
+    ClientConnected => \&ClientConnected,
+    ClientDisconnected => \&ClientDisconnected,
+  );
+
+Mole::Snmp->spawn;
+
+POE::Session->create
+   (inline_states => {
+       _start  => sub {
+                     my $kernel = $_[KERNEL];
+                     $kernel->yield('heartbeat');
+                  },
+       heartbeat=> sub{  
+                     my $kernel = $_[KERNEL];
+                     printf("--- THE MOLE LIVES -- %s ---\n", time);
+                     $kernel->delay_set('heartbeat', 300);
+                  },
+       _stop   => sub {},
+    }
+   );
+
+
+
+$poe_kernel->run();
+
+################################################################################
+sub ClientInput {
+   my ( $kernel, $heap, $msg ) = @_[ KERNEL, HEAP, ARG0 ];
+   $MCNT++;
+   my $response;
+   #my $reference = $kernel->alias_resolve('SNMP');
+   #open(FOO, ">>/tmp/moled.log");
+   #unless (defined($reference)) {
+   #   printf(FOO "$$ Spawning Mole::SNMP\n");
+   #}
+   #close(FOO);
+   # Process the request into buckets for odd, even, and
+   # Build the response hash, then send it to the client.
+   if (&validate($msg) eq '0') {
+      $response = [$msg->mid, "OK"];
+      &process($msg);
+   } else {
+      $response = [$msg->mid, 'REJECTED'];
+   }
+   ##my $response = sprintf("Client MID=%s, SvrMcnt=%s", $message->mid, $MCNT);
+   #$heap->{client}->put( $response );
+}
+
+################################################################################
+sub ClientConnected {
+   my $kernel = $_[KERNEL];
+   #$kernel->post( moled => "shutdown" );
+}
+sub ClientDisconnected {
+        my $kernel = $_[KERNEL];
+        #$kernel->post( moled => "shutdown" );
+}
+
+################################################################################
+sub process {
+   my $msg = shift;
+   $msg->debug('moled::process',3 ) if $debug;
+   $poe_kernel->post($msg->dstsess, $msg->dstevent, $msg, 'return');
+
+}
+
+################################################################################
+sub validate {
+   my $message = shift;
+   return &validate_post($message);
+
+   return -1;
+}
+
+################################################################################
+sub return {
+   my ($heap, $msg) = @_[ HEAP, ARG0 ];
+   $msg->debug('moled::return') if $debug;
+   ##
+   ## TODO Need eval to trap error here 
+   ##
+   $heap->{client}->put($msg);
+      
+}
+
+################################################################################
+sub validate_post {
+   my $message = shift;
+   #return -1 unless defined($message->orb);
+   #return -1 unless defined($message->mid);
+   #return -1 unless defined($message->session);
+   #return -1 unless defined($message->event);
+   #return -1 unless defined($message->args);
+   ##
+   ## TODO Determine if message supported by daemon
+   ## TODO Determine if named-session exists
+   ## TODO Determine if named-event exists
+   ##
+   return 0;
+}
+
+package Mole::Server;
+our $ALIAS="moled";
